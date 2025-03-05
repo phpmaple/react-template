@@ -9,3 +9,13 @@ You can learn more in the [Base Extension Development Guide](https://lark-techno
 ## Install packages
 
 Install packages in Shell pane or search and add in Packages pane.
+
+## Publish
+Please npm run build first, submit it together with the dist directory, and then fill in the form:
+[Share form](https://feishu.feishu.cn/share/base/form/shrcnGFgOOsFGew3SDZHPhzkM0e)
+
+
+
+## 发布
+请先npm run build，连同dist目录一起提交，然后再填写表单：
+[共享表单](https://feishu.feishu.cn/share/base/form/shrcnGFgOOsFGew3SDZHPhzkM0e)

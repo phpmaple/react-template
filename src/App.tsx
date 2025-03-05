@@ -1,11 +1,11 @@
 import './App.css';
-import { bitable, TableMeta } from "@lark-base-open/js-sdk";
+import { bitable, ITableMeta } from "@lark-base-open/js-sdk";
 import { Button, Form } from '@douyinfe/semi-ui';
 import { BaseFormApi } from '@douyinfe/semi-foundation/lib/es/form/interface';
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 export default function App() {
-  const [tableMetaList, setTableMetaList] = useState<TableMeta[]>();
+  const [tableMetaList, setTableMetaList] = useState<ITableMeta[]>();
   const formApi = useRef<BaseFormApi>();
   const addRecord = useCallback(async ({ table: tableId }: { table: string }) => {
     if (tableId) {
