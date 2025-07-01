@@ -13,11 +13,13 @@ const PROVIDERS = [
 
 interface FormValues {
   table: string;
+  mode: 'separated' | 'messages'; // 'separated' for current mode, 'messages' for new mode
   systemPrompt: string;
   provider: string;
   model: string;
   apiKey: string;
   userPromptFields: string[];
+  messagesField: string; // For messages mode
   resultFields: string[];
   temperature?: number;
   topP?: number;
@@ -41,6 +43,7 @@ export default function App() {
   const [loadingModels, setLoadingModels] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [currentProvider, setCurrentProvider] = useState('openrouter');
+  const [currentMode, setCurrentMode] = useState<'separated' | 'messages'>('separated');
   const formApi = useRef<BaseFormApi>();
 
   // Load table list and field list
@@ -58,6 +61,7 @@ export default function App() {
           // Set default values including current table
           const defaultValues: any = {
             provider: savedProvider,
+            mode: 'separated', // Default to separated mode
           };
           
           // Set current table as default
@@ -162,8 +166,19 @@ export default function App() {
 
   // Handle form submission
   const handleSubmit = useCallback(async (values: FormValues) => {
-    if (!values.table || !values.userPromptFields?.length || !values.apiKey || !values.systemPrompt) {
+    // Validate required fields based on mode
+    if (!values.table || !values.apiKey || !values.mode) {
       Toast.error('Please fill in all required fields');
+      return;
+    }
+    
+    if (values.mode === 'separated' && (!values.userPromptFields?.length || !values.systemPrompt)) {
+      Toast.error('Please fill in system prompt and user prompt fields for separated mode');
+      return;
+    }
+    
+    if (values.mode === 'messages' && !values.messagesField) {
+      Toast.error('Please select a messages field for messages mode');
       return;
     }
 
@@ -180,65 +195,129 @@ export default function App() {
       // Collect all records that need processing
       const recordsToProcess: Array<{
         record: any;
-        userPromptText: string;
+        messages: any[];
         fieldsToUpdate: string[];
       }> = [];
 
       for (const record of records.records) {
-        // Extract and combine text from multiple user prompt fields
-        const userPromptTexts: string[] = [];
+        let messages: any[] = [];
         
-        for (const fieldId of values.userPromptFields) {
-          const fieldValue = record.fields[fieldId];
-          if (!fieldValue) continue;
+        if (values.mode === 'separated') {
+          // Extract and combine text from multiple user prompt fields
+          const userPromptTexts: string[] = [];
           
-          let extractedText: string;
-          
-          // Handle different field formats
-          if (typeof fieldValue === 'string') {
-            // Try to parse as JSON if it looks like a JSON string
-            if (fieldValue.startsWith('[') && fieldValue.endsWith(']')) {
-              try {
-                const parsed = JSON.parse(fieldValue);
-                if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].text) {
-                  // Extract text from rich text format [{type: "text", text: "content"}]
-                  extractedText = parsed.map((item: any) => item.text || '').join('');
-                } else {
+          for (const fieldId of values.userPromptFields) {
+            const fieldValue = record.fields[fieldId];
+            if (!fieldValue) continue;
+            
+            let extractedText: string;
+            
+            // Handle different field formats
+            if (typeof fieldValue === 'string') {
+              // Try to parse as JSON if it looks like a JSON string
+              if (fieldValue.startsWith('[') && fieldValue.endsWith(']')) {
+                try {
+                  const parsed = JSON.parse(fieldValue);
+                  if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].text) {
+                    // Extract text from rich text format [{type: "text", text: "content"}]
+                    extractedText = parsed.map((item: any) => item.text || '').join('');
+                  } else {
+                    extractedText = fieldValue;
+                  }
+                } catch {
                   extractedText = fieldValue;
                 }
-              } catch {
+              } else {
                 extractedText = fieldValue;
               }
+            } else if (typeof fieldValue === 'object' && fieldValue !== null) {
+              // Handle object format
+              const fieldObj = fieldValue as any;
+              if (Array.isArray(fieldObj)) {
+                // Handle array of rich text objects
+                extractedText = fieldObj.map((item: any) => item.text || '').join('');
+              } else {
+                extractedText = fieldObj.text || fieldObj.content || JSON.stringify(fieldValue);
+              }
             } else {
-              extractedText = fieldValue;
+              extractedText = String(fieldValue);
             }
-          } else if (typeof fieldValue === 'object' && fieldValue !== null) {
-            // Handle object format
-            const fieldObj = fieldValue as any;
-            if (Array.isArray(fieldObj)) {
-              // Handle array of rich text objects
-              extractedText = fieldObj.map((item: any) => item.text || '').join('');
-            } else {
-              extractedText = fieldObj.text || fieldObj.content || JSON.stringify(fieldValue);
+            
+            if (extractedText.trim()) {
+              userPromptTexts.push(extractedText);
             }
-          } else {
-            extractedText = String(fieldValue);
           }
           
-          if (extractedText.trim()) {
-            userPromptTexts.push(extractedText);
+          // Skip if no user prompt content found
+          if (userPromptTexts.length === 0) {
+            processedCount++;
+            setProgress(Math.round((processedCount / totalCount) * 100));
+            continue;
+          }
+          
+          // Combine all user prompts directly
+          const userPromptText = userPromptTexts.join('');
+          
+          // Create messages array for separated mode
+          messages = [
+            { role: 'system', content: values.systemPrompt },
+            { role: 'user', content: userPromptText }
+          ];
+        } else if (values.mode === 'messages') {
+          // Extract messages from the messages field
+          const fieldValue = record.fields[values.messagesField];
+          if (!fieldValue) {
+            processedCount++;
+            setProgress(Math.round((processedCount / totalCount) * 100));
+            continue;
+          }
+          
+          try {
+            // Parse messages from JSON string or extract from rich text
+            let messagesData: any;
+            
+            if (typeof fieldValue === 'string') {
+              // Try to parse as JSON
+              try {
+                messagesData = JSON.parse(fieldValue);
+              } catch {
+                // If not JSON, treat as plain text and assume it's a user message
+                messages = [{ role: 'user', content: fieldValue }];
+              }
+            } else if (Array.isArray(fieldValue)) {
+              // Handle rich text format
+              const extractedText = fieldValue.map((item: any) => item.text || '').join('');
+              try {
+                messagesData = JSON.parse(extractedText);
+              } catch {
+                messages = [{ role: 'user', content: extractedText }];
+              }
+            } else {
+              messagesData = fieldValue;
+            }
+            
+            // If we have parsed data, use it as messages
+            if (messagesData && Array.isArray(messagesData)) {
+              messages = messagesData;
+            } else if (messagesData && typeof messagesData === 'object') {
+              // Single message object
+              messages = [messagesData];
+            }
+            
+            // Validate messages format
+            if (!messages.every(msg => msg.role && msg.content)) {
+              console.warn('Invalid messages format, skipping record');
+              processedCount++;
+              setProgress(Math.round((processedCount / totalCount) * 100));
+              continue;
+            }
+          } catch (error) {
+            console.error('Failed to parse messages field:', error);
+            processedCount++;
+            setProgress(Math.round((processedCount / totalCount) * 100));
+            continue;
           }
         }
-        
-        // Skip if no user prompt content found
-        if (userPromptTexts.length === 0) {
-          processedCount++;
-          setProgress(Math.round((processedCount / totalCount) * 100));
-          continue;
-        }
-        
-        // Combine all user prompts directly
-        const userPromptText = userPromptTexts.join('');
 
         // Check which result fields need to be filled
         const fieldsToUpdate: string[] = [];
@@ -260,7 +339,7 @@ export default function App() {
         // Add to processing queue
         recordsToProcess.push({
           record,
-          userPromptText,
+          messages,
           fieldsToUpdate
         });
       }
@@ -272,18 +351,17 @@ export default function App() {
         const batch = recordsToProcess.slice(i, i + BATCH_SIZE);
         
         // Process batch concurrently
-        const batchPromises = batch.map(async ({ record, userPromptText, fieldsToUpdate }) => {
+        const batchPromises = batch.map(async ({ record, messages, fieldsToUpdate }) => {
           const updateFields: any = {};
           
           // Process all fields for this record concurrently
           const fieldPromises = fieldsToUpdate.map(async (fieldId) => {
             try {
-              const result = await callAIAPI(
+              const result = await callAIAPIWithMessages(
                 values.apiKey,
                 values.provider,
                 values.model,
-                values.systemPrompt,
-                userPromptText,
+                messages,
                 values.temperature ?? 0,
                 values.topP ?? 0
               );
@@ -327,22 +405,18 @@ export default function App() {
     }
   }, []);
 
-  // Call AI API based on provider
-  const callAIAPI = async (
+  // Call AI API with messages array
+  const callAIAPIWithMessages = async (
     apiKey: string,
     provider: string,
     model: string,
-    systemPrompt: string,
-    userPrompt: string,
+    messages: any[],
     temperature?: number,
     topP?: number
   ): Promise<string> => {
     const requestBody: any = {
       model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ]
+      messages
     };
 
     // Add optional parameters if provided
@@ -385,6 +459,7 @@ export default function App() {
     return data.choices[0]?.message?.content || 'No response';
   };
 
+
   return (
     <main className="main">
       <Form
@@ -405,6 +480,25 @@ export default function App() {
               {name}
             </Form.Select.Option>
           ))}
+        </Form.Select>
+
+        <Form.Select
+          field='mode'
+          label='Data Mode'
+          placeholder='Select data mode'
+          style={{ width: '100%' }}
+          onChange={(value) => {
+            const mode = value as 'separated' | 'messages';
+            setCurrentMode(mode);
+          }}
+          rules={[{ required: true, message: 'Please select data mode' }]}
+        >
+          <Form.Select.Option value='separated'>
+            Separated (System Prompt + User Prompt Fields)
+          </Form.Select.Option>
+          <Form.Select.Option value='messages'>
+            Messages (Single Messages Field)
+          </Form.Select.Option>
         </Form.Select>
 
         <Form.Select
@@ -471,14 +565,16 @@ export default function App() {
           rules={[{ required: true, message: 'Please enter API key' }]}
         />
 
-        <Form.TextArea
-          field='systemPrompt'
-          label='System Prompt'
-          placeholder='Enter the system prompt for the AI model'
-          style={{ width: '100%' }}
-          autosize={{ minRows: 3, maxRows: 6 }}
-          rules={[{ required: true, message: 'Please enter system prompt' }]}
-        />
+        {currentMode === 'separated' && (
+          <Form.TextArea
+            field='systemPrompt'
+            label='System Prompt'
+            placeholder='Enter the system prompt for the AI model'
+            style={{ width: '100%' }}
+            autosize={{ minRows: 3, maxRows: 6 }}
+            rules={[{ required: true, message: 'Please enter system prompt' }]}
+          />
+        )}
 
         <Form.Select
           field='model'
@@ -508,22 +604,42 @@ export default function App() {
           ))}
         </Form.Select>
 
-        <Form.Select
-          field='userPromptFields'
-          label='User Prompt Fields'
-          placeholder='Select fields containing user prompts (will be combined)'
-          multiple
-          style={{ width: '100%' }}
-          rules={[{ required: true, message: 'Please select at least one user prompt field' }]}
-        >
-          {fieldMetaList
-            .filter(field => field.type === 1 || field.type === 2) // Text or Long Text
-            .map(({ name, id }) => (
-              <Form.Select.Option key={id} value={id}>
-                {name}
-              </Form.Select.Option>
-            ))}
-        </Form.Select>
+        {currentMode === 'separated' && (
+          <Form.Select
+            field='userPromptFields'
+            label='User Prompt Fields'
+            placeholder='Select fields containing user prompts (will be combined)'
+            multiple
+            style={{ width: '100%' }}
+            rules={[{ required: true, message: 'Please select at least one user prompt field' }]}
+          >
+            {fieldMetaList
+              .filter(field => field.type === 1 || field.type === 2) // Text or Long Text
+              .map(({ name, id }) => (
+                <Form.Select.Option key={id} value={id}>
+                  {name}
+                </Form.Select.Option>
+              ))}
+          </Form.Select>
+        )}
+
+        {currentMode === 'messages' && (
+          <Form.Select
+            field='messagesField'
+            label='Messages Field'
+            placeholder='Select field containing messages array'
+            style={{ width: '100%' }}
+            rules={[{ required: true, message: 'Please select a messages field' }]}
+          >
+            {fieldMetaList
+              .filter(field => field.type === 1 || field.type === 2) // Text or Long Text
+              .map(({ name, id }) => (
+                <Form.Select.Option key={id} value={id}>
+                  {name}
+                </Form.Select.Option>
+              ))}
+          </Form.Select>
+        )}
 
         <Form.Select
           field='resultFields'
