@@ -1,6 +1,6 @@
 import { BaseFormApi } from '@douyinfe/semi-foundation/lib/es/form/interface';
+import { IconEyeClosed, IconEyeOpened } from '@douyinfe/semi-icons';
 import { Button, Form, Progress, Toast } from '@douyinfe/semi-ui';
-import { IconEyeOpened, IconEyeClosed } from '@douyinfe/semi-icons';
 import { bitable, IFieldMeta, ITableMeta } from "@lark-base-open/js-sdk";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
@@ -8,6 +8,7 @@ import './App.css';
 // Provider list
 const PROVIDERS = [
   { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'doubao', label: 'Doubao' },
 ];
 
 interface FormValues {
@@ -71,9 +72,7 @@ export default function App() {
           if (savedApiKey) {
             defaultValues.apiKey = savedApiKey;
             // Load models if API key exists
-            if (savedProvider === 'openrouter') {
-              loadModels(savedApiKey);
-            }
+            loadModels(savedApiKey, savedProvider);
           }
           
           formApi.current?.setValues(defaultValues);
@@ -94,32 +93,62 @@ export default function App() {
     }
   }, []);
 
-  // Load models from OpenRouter
-  const loadModels = useCallback(async (apiKey: string) => {
+  // Load models based on provider
+  const loadModels = useCallback(async (apiKey: string, provider: string) => {
     if (!apiKey) return;
     
     setLoadingModels(true);
     try {
-      const response = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+      let modelList: Model[] = [];
+      
+      if (provider === 'openrouter') {
+        const response = await fetch('https://openrouter.ai/api/v1/models', {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch models');
         }
-      });
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch models');
+        const data = await response.json();
+        modelList = data.data.map((model: any) => ({
+          id: model.id,
+          name: model.name || model.id,
+          pricing: model.pricing ? {
+            prompt: (parseFloat(model.pricing.prompt) * 1000000).toFixed(2),
+            completion: (parseFloat(model.pricing.completion) * 1000000).toFixed(2)
+          } : undefined
+        }));
+      } else if (provider === 'doubao') {
+        // Hardcoded Doubao model list
+        modelList = [
+          { id: 'doubao-seed-1-6-thinking-250615', name: 'Doubao-Seed-1.6-thinking (250615)', pricing: undefined },
+          { id: 'doubao-seed-1-6-250615', name: 'Doubao-Seed-1.6 (250615)', pricing: undefined },
+          { id: 'doubao-seed-1-6-flash-250615', name: 'Doubao-Seed-1.6-flash (250615)', pricing: undefined },
+          { id: 'doubao-1-5-thinking-vision-pro-250428', name: 'Doubao-1.5-thinking-vision-pro (250428)', pricing: undefined },
+          { id: 'doubao-seedream-3-0-t2i-250415', name: 'Doubao-Seedream-3.0-t2i (250415)', pricing: undefined },
+          { id: 'doubao-seedance-1-0-lite-t2v-250428', name: 'Doubao-Seedance-1.0-lite-t2v (250428)', pricing: undefined },
+          { id: 'doubao-seedance-1-0-lite-i2v-250428', name: 'Doubao-Seedance-1.0-lite-i2v (250428)', pricing: undefined },
+          { id: 'doubao-1-5-ui-tars-250428', name: 'Doubao-1.5-UI-TARS (250428)', pricing: undefined },
+          { id: 'doubao-1-5-thinking-pro-250415', name: 'Doubao-1.5-thinking-pro (250415)', pricing: undefined },
+          { id: 'doubao-1-5-vision-pro-250328', name: 'Doubao-1.5-vision-pro (250328)', pricing: undefined },
+          { id: 'doubao-1-5-vision-lite-250315', name: 'Doubao-1.5-vision-lite (250315)', pricing: undefined },
+          { id: 'doubao-1-5-pro-256k-250115', name: 'Doubao-1.5-pro-256k (250115)', pricing: undefined },
+          { id: 'doubao-1-5-vision-pro-32k-250115', name: 'Doubao-1.5-vision-pro-32k (250115)', pricing: undefined },
+          { id: 'doubao-1-5-pro-32k-250115', name: 'Doubao-1.5-pro-32k (250115)', pricing: undefined },
+          { id: 'doubao-1-5-lite-32k-250115', name: 'Doubao-1.5-lite-32k (250115)', pricing: undefined },
+          { id: 'doubao-pro-256k-241115', name: 'Doubao-pro-256k (241115)', pricing: undefined },
+          { id: 'doubao-pro-32k-241215', name: 'Doubao-pro-32k (241215)', pricing: undefined },
+          { id: 'doubao-pro-128k-240628', name: 'Doubao-pro-128k (240628)', pricing: undefined },
+          { id: 'doubao-pro-4k-240515', name: 'Doubao-pro-4k (240515)', pricing: undefined },
+          { id: 'doubao-lite-32k-240828', name: 'Doubao-lite-32k (240828)', pricing: undefined },
+          { id: 'doubao-lite-4k-character-240828', name: 'Doubao-lite-4k (character-240828)', pricing: undefined },
+          { id: 'doubao-lite-128k-240828', name: 'Doubao-lite-128k (240828)', pricing: undefined },
+        ];
       }
-
-      const data = await response.json();
-      const modelList: Model[] = data.data.map((model: any) => ({
-        id: model.id,
-        name: model.name || model.id,
-        pricing: model.pricing ? {
-          prompt: (parseFloat(model.pricing.prompt) * 1000000).toFixed(2),
-          completion: (parseFloat(model.pricing.completion) * 1000000).toFixed(2)
-        } : undefined
-      }));
 
       setModels(modelList);
     } catch (error) {
@@ -249,13 +278,14 @@ export default function App() {
           // Process all fields for this record concurrently
           const fieldPromises = fieldsToUpdate.map(async (fieldId) => {
             try {
-              const result = await callOpenRouter(
+              const result = await callAIAPI(
                 values.apiKey,
+                values.provider,
                 values.model,
                 values.systemPrompt,
                 userPromptText,
-                values.temperature,
-                values.topP
+                values.temperature ?? 0,
+                values.topP ?? 0
               );
               return { fieldId, result };
             } catch (error) {
@@ -297,9 +327,10 @@ export default function App() {
     }
   }, []);
 
-  // Call OpenRouter API
-  const callOpenRouter = async (
+  // Call AI API based on provider
+  const callAIAPI = async (
     apiKey: string,
+    provider: string,
     model: string,
     systemPrompt: string,
     userPrompt: string,
@@ -322,14 +353,27 @@ export default function App() {
       requestBody.top_p = topP;
     }
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    let apiUrl: string;
+    let headers: any = {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    };
+
+    if (provider === 'openrouter') {
+      apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
+      headers['HTTP-Referer'] = window.location.href;
+      headers['X-Title'] = 'Lark Base Plugin';
+    } else if (provider === 'doubao') {
+      // Doubao uses a different endpoint format
+      apiUrl = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
+      // Doubao may require different headers
+    } else {
+      throw new Error('Unsupported provider');
+    }
+
+    const response = await fetch(apiUrl, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': window.location.href,
-        'X-Title': 'Lark Base Plugin'
-      },
+      headers,
       body: JSON.stringify(requestBody)
     });
 
@@ -375,13 +419,17 @@ export default function App() {
             
             // Load API key for the new provider
             const savedApiKey = localStorage.getItem(`${provider}_api_key`);
+            
+            // Always clear the model when switching provider
+            formApi.current?.setValue('model', '');
+            
             if (savedApiKey) {
-              formApi.current?.setValues({ apiKey: savedApiKey });
-              if (provider === 'openrouter') {
-                loadModels(savedApiKey);
-              }
+              // Update API key and load models
+              formApi.current?.setValue('apiKey', savedApiKey);
+              loadModels(savedApiKey, provider);
             } else {
-              formApi.current?.setValues({ apiKey: '' });
+              // Clear API key and models when no saved key exists
+              formApi.current?.setValue('apiKey', '');
               setModels([]);
             }
           }}
@@ -413,9 +461,7 @@ export default function App() {
             // Save API key to localStorage with provider prefix
             if (apiKey && apiKey.length > 10) {
               localStorage.setItem(`${currentProvider}_api_key`, apiKey);
-              if (currentProvider === 'openrouter') {
-                loadModels(apiKey);
-              }
+              loadModels(apiKey, currentProvider);
             } else if (!apiKey) {
               // Remove API key if cleared
               localStorage.removeItem(`${currentProvider}_api_key`);
@@ -448,7 +494,7 @@ export default function App() {
             <Form.Select.Option 
               key={model.id} 
               value={model.id}
-              label={`${model.name} ${model.id}`}
+              label={model.name}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                 <span>{model.name}</span>
