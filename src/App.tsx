@@ -147,6 +147,13 @@ export default function App() {
       
       let processedCount = 0;
       const totalCount = records.records.length;
+      
+      // Collect all records that need processing
+      const recordsToProcess: Array<{
+        record: any;
+        userPromptText: string;
+        fieldsToUpdate: string[];
+      }> = [];
 
       for (const record of records.records) {
         // Extract and combine text from multiple user prompt fields
@@ -221,32 +228,64 @@ export default function App() {
           continue;
         }
 
-        // Process only for empty fields
-        const updateFields: any = {};
-        for (const fieldId of fieldsToUpdate) {
-          try {
-            const result = await callOpenRouter(
-              values.apiKey,
-              values.model,
-              values.systemPrompt,
-              userPromptText,
-              values.temperature,
-              values.topP
-            );
-            updateFields[fieldId] = result;
-          } catch (error) {
-            console.error(`Failed to process field ${fieldId}:`, error);
-            updateFields[fieldId] = `Error: ${error}`;
-          }
-        }
-
-        if (Object.keys(updateFields).length > 0) {
-          await table.setRecord(record.recordId, { fields: updateFields });
-        }
-
-        processedCount++;
-        setProgress(Math.round((processedCount / totalCount) * 100));
+        // Add to processing queue
+        recordsToProcess.push({
+          record,
+          userPromptText,
+          fieldsToUpdate
+        });
       }
+
+      // Process records in batches with concurrency control
+      const BATCH_SIZE = 20; // Process 20 records concurrently
+      
+      for (let i = 0; i < recordsToProcess.length; i += BATCH_SIZE) {
+        const batch = recordsToProcess.slice(i, i + BATCH_SIZE);
+        
+        // Process batch concurrently
+        const batchPromises = batch.map(async ({ record, userPromptText, fieldsToUpdate }) => {
+          const updateFields: any = {};
+          
+          // Process all fields for this record concurrently
+          const fieldPromises = fieldsToUpdate.map(async (fieldId) => {
+            try {
+              const result = await callOpenRouter(
+                values.apiKey,
+                values.model,
+                values.systemPrompt,
+                userPromptText,
+                values.temperature,
+                values.topP
+              );
+              return { fieldId, result };
+            } catch (error) {
+              console.error(`Failed to process field ${fieldId}:`, error);
+              return { fieldId, result: `Error: ${error}` };
+            }
+          });
+          
+          const fieldResults = await Promise.all(fieldPromises);
+          
+          // Collect results
+          for (const { fieldId, result } of fieldResults) {
+            updateFields[fieldId] = result;
+          }
+          
+          // Update record if there are fields to update
+          if (Object.keys(updateFields).length > 0) {
+            await table.setRecord(record.recordId, { fields: updateFields });
+          }
+          
+          processedCount++;
+          setProgress(Math.round((processedCount / totalCount) * 100));
+        });
+        
+        // Wait for current batch to complete before processing next batch
+        await Promise.all(batchPromises);
+      }
+      
+      // Update progress for skipped records
+      setProgress(100);
 
       Toast.success('Processing completed successfully!');
     } catch (error) {
@@ -275,11 +314,11 @@ export default function App() {
       ]
     };
 
-    // Add optional parameters if provided and not zero
-    if (temperature !== undefined && temperature !== 0) {
+    // Add optional parameters if provided
+    if (temperature !== undefined) {
       requestBody.temperature = temperature;
     }
-    if (topP !== undefined && topP !== 0) {
+    if (topP !== undefined) {
       requestBody.top_p = topP;
     }
 
@@ -463,7 +502,7 @@ export default function App() {
           min={0}
           max={2}
           step={0.1}
-          defaultValue={1}
+          defaultValue={0}
           marks={{
             0: '0',
             0.5: '0.5',
@@ -480,7 +519,7 @@ export default function App() {
           min={0}
           max={1}
           step={0.05}
-          defaultValue={1}
+          defaultValue={0}
           marks={{
             0: '0',
             0.25: '0.25',
