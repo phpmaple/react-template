@@ -9,6 +9,7 @@ import './App.css';
 const PROVIDERS = [
   { value: 'openrouter', label: 'OpenRouter' },
   { value: 'doubao', label: 'Doubao' },
+  { value: 'uniapi', label: 'UniAPI' },
 ];
 
 interface FormValues {
@@ -152,6 +153,28 @@ export default function App() {
           { id: 'doubao-lite-4k-character-240828', name: 'Doubao-lite-4k (character-240828)', pricing: undefined },
           { id: 'doubao-lite-128k-240828', name: 'Doubao-lite-128k (240828)', pricing: undefined },
         ];
+      } else if (provider === 'uniapi') {
+        // Fetch models from UniAPI
+        const response = await fetch('https://api.uniapi.io/v1/models', {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch models');
+        }
+
+        const data = await response.json();
+        modelList = data.data.map((model: any) => ({
+          id: model.id,
+          name: model.name || model.id,
+          pricing: model.pricing ? {
+            prompt: (parseFloat(model.pricing.prompt) * 1000000).toFixed(2),
+            completion: (parseFloat(model.pricing.completion) * 1000000).toFixed(2)
+          } : undefined
+        }));
       }
 
       setModels(modelList);
@@ -441,6 +464,9 @@ export default function App() {
       // Doubao uses a different endpoint format
       apiUrl = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
       // Doubao may require different headers
+    } else if (provider === 'uniapi') {
+      // UniAPI is OpenAI compatible
+      apiUrl = 'https://api.uniapi.io/v1/chat/completions';
     } else {
       throw new Error('Unsupported provider');
     }
